@@ -374,7 +374,7 @@ class StatCollector {
 
                 totalTime += Math.round(Math.abs(currentBlock - parentBlock));
             } catch (e: any) {
-                blockFetchErrors.push(e);
+                //blockFetchErrors.push(e);
             }
         }
 

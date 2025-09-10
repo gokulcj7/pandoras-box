@@ -72,6 +72,7 @@ class Batcher {
                             params: [item[i]],
                             id: nextIndx++,
                         });
+                        console.log(singleRequests);
 
                         if (i != item.length - 1) {
                             singleRequests += ',\n';

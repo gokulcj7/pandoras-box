@@ -9,6 +9,8 @@ import { Wallet } from '@ethersproject/wallet';
 import { SingleBar } from 'cli-progress';
 import Logger from '../logger/logger';
 import { senderAccount } from './signer';
+import { SLHWallet } from '../crypto/slh-wallet.js';
+
 
 class EOARuntime {
     mnemonic: string;
@@ -31,9 +33,9 @@ class EOARuntime {
     async EstimateBaseTx(): Promise<BigNumber> {
         // EOA to EOA transfers are simple value transfers between accounts
         this.gasEstimation = await this.provider.estimateGas({
-            from: Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/0`)
+            from: SLHWallet.fromMnemonic(this.mnemonic, 0)
                 .address,
-            to: Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/1`).address,
+            to: SLHWallet.fromMnemonic(this.mnemonic, 1).address,
             value: this.defaultValue,
         });
 
@@ -54,12 +56,12 @@ class EOARuntime {
         accounts: senderAccount[],
         numTx: number
     ): Promise<TransactionRequest[]> {
-        const queryWallet = Wallet.fromMnemonic(
+        const queryWallet = SLHWallet.fromMnemonic(
             this.mnemonic,
-            `m/44'/60'/0'/0/0`
+            0
         ).connect(this.provider);
 
-        const chainID = await queryWallet.getChainId();
+        const chainID = 4202604;//await queryWallet.getChainId();
         const gasPrice = this.gasPrice;
 
         Logger.info(`Chain ID: ${chainID}`);

@@ -3,46 +3,59 @@ import { shake256 } from "@noble/hashes/sha3";
 import { keccak256 } from "ethereum-cryptography/keccak";
 import * as slh from "@noble/post-quantum/slh-dsa";
 import { Buffer } from "buffer";
+import axios from 'axios';
+import { BigNumber } from '@ethersproject/bignumber';
+import rlp from "rlp";
+
 
 /**
  * SLH-DSA Wallet class that replaces ethers Wallet.fromMnemonic functionality
  * but uses post-quantum SLH-DSA keypairs instead of ECDSA
  */
 class SLHWallet {
-  constructor(address, privateKey, publicKey, privateKeyRaw, publicKeyRaw) {
+  constructor(address, privateKey, publicKey, privateKeyRaw, publicKeyRaw, index) {
     this.address = address;
     this.privateKey = privateKey;
     this.publicKey = publicKey;
     this.privateKeyRaw = privateKeyRaw;
     this.publicKeyRaw = publicKeyRaw;
+    this.index = index;
   }
 
   /**
    * Create a wallet from mnemonic using SLH-DSA keypair derivation
    * @param {string} mnemonic - BIP39 mnemonic phrase
-   * @returns {Promise<SLHWallet>} - Wallet instance with SLH-DSA derived address
+   * @param {number} index - Account index (default: 0)
+   * @returns {SLHWallet} - Wallet instance with SLH-DSA derived address
    */
-  static async fromMnemonic(mnemonic) {
+  static fromMnemonic(mnemonic, index = 0) {
     try {
       // Validate inputs
-      if (!mnemonic || typeof mnemonic !== 'string') {
-        throw new Error('Invalid mnemonic: must be a non-empty string');
-      }
+      // if (!mnemonic || typeof mnemonic !== 'string') {
+      //   throw new Error('Invalid mnemonic: must be a non-empty string');
+      // }
       
-      if (typeof index !== 'number' || index < 0 || !Number.isInteger(index)) {
-        throw new Error('Invalid index: must be a non-negative integer');
-      }
+      // if (typeof index !== 'number' || index < 0 || !Number.isInteger(index)) {
+      //   throw new Error('Invalid index: must be a non-negative integer');
+      // }
 
       // Convert mnemonic to entropy
       const entropy = Buffer.from(mnemonicToEntropy(mnemonic), "hex");
+      let seed96;
       
       // Create derivation-specific entropy by combining original entropy with index
-      const indexBuffer = Buffer.allocUnsafe(4);
-      indexBuffer.writeUInt32BE(index, 0);
-      const combinedEntropy = Buffer.concat([entropy, indexBuffer]);
-      
+      if(index>0)
+      {
+        const indexBuffer = Buffer.allocUnsafe(4);
+        indexBuffer.writeUInt32BE(index, 0);
+        const combinedEntropy = Buffer.concat([entropy, indexBuffer]);
+        seed96 = shake256.create({ dkLen: 96 }).update(combinedEntropy).digest();
+      }
+      else
+      {
       // Generate 96-byte seed using SHAKE256 with derivation-specific entropy
-      const seed96 = shake256.create({ dkLen: 96 }).update(combinedEntropy).digest();
+        seed96 = shake256.create({ dkLen: 96 }).update(entropy).digest();
+      }
       
       // Generate SLH-DSA keypair
       const keys = slh.slh_dsa_shake_256f.keygen(seed96);
@@ -58,19 +71,115 @@ class SLHWallet {
       const addressBytes = publicKeyHash.slice(-20);
       const address = bufferToHex(addressBytes);
 
+      console.log(address.toLowerCase());
       // Return new wallet instance
       return new SLHWallet(
         address.toLowerCase(),
         bufferToHex(keys.secretKey),
         bufferToHex(originalPublicKey),
         keys.secretKey,
-        keys.publicKey
+        keys.publicKey,
+        index
       );
 
     } catch (error) {
       throw new Error(`Failed to create wallet from mnemonic: ${error.message}`);
     }
   }
+
+  /**
+     * Get nonce from network
+     * @returns {Promise<number>} - Current nonce for the address
+     */
+    async getNonce() {
+        if (!this.provider) {
+            throw new Error('No provider connected');
+        }
+
+        try {
+            const response = await axios.post(this.provider.connection.url, {
+                jsonrpc: "2.0",
+                method: "eth_getTransactionCount",
+                params: [this.address, "latest"],
+                id: 1,
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.message);
+            }
+
+            return parseInt(response.data.result, 16);
+        } catch (error) {
+            console.error("Error getting nonce:", error);
+            throw new Error("Failed to get nonce from network");
+        }
+    }
+
+    /**
+     * Get gas price from network
+     * @returns {BigNumber} - Current gas price in wei
+     */
+    async getGasPrice() {
+        if (!this.provider) {
+            throw new Error('No provider connected');
+        }
+
+        try {
+            const response = await axios.post(this.provider.connection.url, {
+                jsonrpc: "2.0",
+                method: "eth_gasPrice",
+                params: [],
+                id: 1,
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.message);
+            }
+
+            return BigNumber.from(response.data.result);
+        } catch (error) {
+            console.error("Error getting gas price:", error);
+            throw new Error("Failed to get gas price from network");
+        }
+    }
+
+    /**
+     * Estimate gas limit for a transaction
+     * @param {string} to - Recipient address
+     * @param {string|number} valueWei - Amount to send in wei
+     * @returns {Promise<number>} - Estimated gas limit
+     */
+    async estimateGas(to, valueWei) {
+        if (!this.provider) {
+            throw new Error('No provider connected');
+        }
+
+        try {
+            const response = await axios.post(this.provider.connection.url, {
+                jsonrpc: "2.0",
+                method: "eth_estimateGas",
+                params: [
+                    {
+                        from: this.address,
+                        to: to,
+                        value: typeof valueWei === 'string' ? valueWei : `0x${valueWei.toString(16)}`,
+                        data: "0x",
+                    },
+                ],
+                id: 1,
+            });
+
+            if (response.data.error) {
+                throw new Error(response.data.error.message);
+            }
+
+            return parseInt(response.data.result, 16);
+        } catch (error) {
+            console.error("Error getting gas limit:", error);
+            // Return a default gas limit if estimation fails
+            return 21000; // Default gas limit for simple transfers
+        }
+    }
 
   /**
    * Sign a message using SLH-DSA
@@ -86,11 +195,111 @@ class SLHWallet {
 
       // Sign using SLH-DSA
       const signature = slh.slh_dsa_shake_256f.sign(this.privateKeyRaw, messageBytes);
-      
+      console.log(bufferToHex(signature));
       return bufferToHex(signature);
     } catch (error) {
       throw new Error(`Failed to sign message: ${error.message}`);
     }
+  }
+
+  /**
+   * PLACEHOLDER: Sign a transaction (NOT COMPATIBLE WITH ETHEREUM)
+   * This method exists to maintain API compatibility but will not work with Ethereum networks
+   * @param {object} transaction - Transaction object
+   * @returns {Promise<string>} - "Signed" transaction (placeholder)
+   */
+  /**
+ * Sign a transaction using SLH-DSA
+ * @param {object} transaction - Transaction object
+ * @returns {Promise<string>} - Signed transaction hex string
+ */
+async signTransaction(transaction) {
+    try {
+        // Format transaction fields
+        const unsignedTxFields = [
+            transaction.nonce ? 
+                BigNumber.from(transaction.nonce)._hex : '0x',
+            transaction.gasPrice ? 
+                BigNumber.from(transaction.gasPrice)._hex : '0x',
+            transaction.gasLimit ? 
+                BigNumber.from(transaction.gasLimit)._hex : '0x',
+            transaction.to || '0x',
+            transaction.value ? 
+                BigNumber.from(transaction.value)._hex : '0x',
+            transaction.data || '0x',
+            transaction.chainId ? 
+                BigNumber.from(transaction.chainId)._hex : '0x',
+            '0x',
+            '0x'
+        ];
+
+        // RLP encode and hash
+        const rlpEncoded = rlp.encode(unsignedTxFields);
+        const msgHash = keccak256(rlpEncoded);
+
+        // Sign using SLH-DSA
+        const signature = slh.slh_dsa_shake_256f.sign(
+            this.privateKeyRaw,
+            msgHash
+        );
+
+        // Verify signature length
+        if (signature.length !== 49856) {
+            throw new Error(`Invalid signature length: ${signature.length}`);
+        }
+
+        // Convert signature to hex
+        const signatureHex = Buffer.from(signature).toString('hex');
+        
+        // Get public key without 0x prefix
+        const publicKey = this.publicKey.replace('0x', '');
+
+        // Return combined signature + public key
+        return '0x' + signatureHex + publicKey;
+
+    } catch (error) {
+        console.error("Transaction signing error:", error);
+        throw new Error(`Failed to sign transaction: ${error.message}`);
+    }
+}
+  /**
+   * Connect to a provider (placeholder for compatibility)
+   * @param {object} provider - Ethereum provider
+   * @returns {SLHWallet} - This wallet instance
+   */
+  connect(provider) {
+    this.provider = provider;
+    return this;
+  }
+
+  // /**
+  //  * Get transaction count (placeholder - uses provider if available)
+  //  * @returns {Promise<number>} - Transaction count
+  //  */
+  // async getTransactionCount() {
+  //   if (this.provider) {
+  //     try {
+  //       return await this.provider.getTransactionCount(this.address);
+  //     } catch (error) {
+  //       console.warn('Failed to get transaction count from provider:', error.message);
+  //     }
+  //   }
+  //   return 0;
+  // }
+
+  /**
+   * Get balance (placeholder - uses provider if available)
+   * @returns {Promise<string>} - Balance in wei
+   */
+  async getBalance() {
+    if (this.provider) {
+      try {
+        return await this.provider.getBalance(this.address);
+      } catch (error) {
+        console.warn('Failed to get balance from provider:', error.message);
+      }
+    }
+    return "0";
   }
 
   /**
@@ -130,7 +339,8 @@ class SLHWallet {
     return {
       address: this.address,
       privateKey: this.privateKey,
-      publicKey: this.publicKey
+      publicKey: this.publicKey,
+      index: this.index
     };
   }
 
@@ -162,51 +372,5 @@ function hexToBuffer(hex) {
   return new Uint8Array(Buffer.from(cleanHex, 'hex'));
 }
 
-/**
- * Generate a new keypair from mnemonic (standalone function)
- * @param {string} mnemonic - BIP39 mnemonic phrase
- * @returns {Promise<object>} - Object containing address, keys, and raw keys
- */
-async function generateKeypair(mnemonic) {
-  const wallet = await SLHWallet.fromMnemonic(mnemonic);
-  return {
-    address: wallet.address,
-    privateKey: wallet.privateKey,
-    publicKey: wallet.publicKey,
-    privateKeyRaw: wallet.privateKeyRaw,
-    publicKeyRaw: wallet.publicKeyRaw,
-  };
-}
-
 // Export the class and utility functions
-export { SLHWallet, generateKeypair, bufferToHex, hexToBuffer };
-
-// Example usage:
-/*
-async function example() {
-  const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-  
-  try {
-    // Using the class method (recommended)
-    const wallet = await SLHWallet.fromMnemonic(mnemonic);
-    console.log('Wallet Address:', wallet.address);
-    console.log('Public Key:', wallet.publicKey);
-    
-    // Sign a message
-    const message = "Hello, post-quantum world!";
-    const signature = await wallet.signMessage(message);
-    console.log('Signature:', signature);
-    
-    // Verify signature
-    const isValid = SLHWallet.verifySignature(message, signature, wallet.publicKeyRaw);
-    console.log('Signature valid:', isValid);
-    
-    // Using the standalone function
-    const keypair = await generateKeypair(mnemonic);
-    console.log('Generated keypair:', keypair);
-    
-  } catch (error) {
-    console.error('Error:', error.message);
-  }
-}
-*/
+export { SLHWallet, bufferToHex, hexToBuffer };

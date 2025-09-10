@@ -7,6 +7,8 @@ import Logger from '../logger/logger';
 import { TokenRuntime } from '../runtime/runtimes';
 import { distributeAccount } from './distributor';
 import DistributorErrors from './errors';
+import { SLHWallet } from '../crypto/slh-wallet.js';
+
 
 class tokenRuntimeCosts {
     totalCost: number;
@@ -109,9 +111,9 @@ class TokenDistributor {
         });
 
         for (const index of this.readyMnemonicIndexes) {
-            const addrWallet = Wallet.fromMnemonic(
+            const addrWallet = SLHWallet.fromMnemonic(
                 this.mnemonic,
-                `m/44'/60'/0'/0/${index}`
+                index
             );
 
             const balance: number = await this.tokenRuntime.GetTokenBalance(

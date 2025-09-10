@@ -6,18 +6,18 @@ import {
 import { Wallet } from '@ethersproject/wallet';
 import { SingleBar } from 'cli-progress';
 import Logger from '../logger/logger';
+import { SLHWallet } from '../crypto/slh-wallet.js';
+
 
 class senderAccount {
     mnemonicIndex: number;
     nonce: number;
-    wallet: Wallet;
-    address: string;
+    wallet: SLHWallet;
 
-    constructor(mnemonicIndex: number, nonce: number, wallet: Wallet, address:string) {
+    constructor(mnemonicIndex: number, nonce: number, wallet: SLHWallet) {
         this.mnemonicIndex = mnemonicIndex;
         this.nonce = nonce;
         this.wallet = wallet;
-        this.address = address;
     }
 
     incrNonce() {
@@ -66,15 +66,14 @@ class Signer {
         for (let i = 0; i < walletsToInit; i++) {
             const accIndex = accountIndexes[i];
 
-            const wallet = Wallet.fromMnemonic(
+            const wallet = SLHWallet.fromMnemonic(
                 this.mnemonic,
-                `m/44'/60'/0'/0/${accIndex}`
+                accIndex
             ).connect(this.provider);
 
-            const address = '0xhjhf';
-            const accountNonce = await wallet.getTransactionCount();
+            const accountNonce = await wallet.getNonce();
 
-            accounts.push(new senderAccount(accIndex, accountNonce, wallet,address));
+            accounts.push(new senderAccount(accIndex, accountNonce, wallet));
 
             nonceBar.increment();
         }

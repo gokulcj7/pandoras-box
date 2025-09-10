@@ -8,7 +8,8 @@ import Heap from 'heap';
 import Logger from '../logger/logger';
 import { Runtime } from '../runtime/runtimes';
 import DistributorErrors from './errors';
-import axios from 'axios';
+import { SLHWallet } from '../crypto/slh-wallet.js';
+
 
 class distributeAccount {
     missingFunds: BigNumber;
@@ -34,11 +35,9 @@ class runtimeCosts {
 
 // Manages the fund distribution before each run-cycle
 class Distributor {
-    ethWallet: Wallet;
+    ethWallet: SLHWallet;
     mnemonic: string;
     provider: Provider;
-    address: string;
-
 
     runtimeEstimator: Runtime;
 
@@ -58,13 +57,11 @@ class Distributor {
         this.mnemonic = mnemonic;
         this.runtimeEstimator = runtimeEstimator;
         this.readyMnemonicIndexes = [];
-        
-        this.address ='0xhehdhhdh';
 
         this.provider = new JsonRpcProvider(url);
-        this.ethWallet = Wallet.fromMnemonic(
+        this.ethWallet = SLHWallet.fromMnemonic(
             mnemonic,
-            `m/44'/60'/0'/0/0`
+            0
         ).connect(this.provider);
     }
 
@@ -122,9 +119,9 @@ class Distributor {
 
         // Calculate the cost of the single distribution transaction
         const singleDistributionCost = await this.provider.estimateGas({
-            from: Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/0`)
+            from: SLHWallet.fromMnemonic(this.mnemonic, 0)
                 .address,
-            to: Wallet.fromMnemonic(this.mnemonic, `m/44'/60'/0'/0/1`).address,
+            to: SLHWallet.fromMnemonic(this.mnemonic, 1).address,
             value: subAccountCost,
         });
 
@@ -149,44 +146,27 @@ class Distributor {
         });
 
         for (let i = 1; i <= this.requestedSubAccounts; i++) {
-            const addrWallet = Wallet.fromMnemonic(
+            const addrWallet = SLHWallet.fromMnemonic(
                 this.mnemonic,
-                `m/44'/60'/0'/0/${i}`
+                i
             ).connect(this.provider);
 
-            // const balance = await addrWallet.getBalance();
-
-            const response = await axios({
-                url: (this.provider as JsonRpcProvider).connection.url,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                data: JSON.stringify({
-                    jsonrpc: '2.0',
-                    method: 'eth_getBalance',
-                    params: [this.address, 'latest'],
-                    id: 1
-                })
-            });
-
-            const balance = BigNumber.from(response.data.result);
-
+            const balance = await addrWallet.getBalance();
             balanceBar.increment();
 
-            if (balance.lt(singleRunCost)) {
-                // Address doesn't have enough funds, make sure it's
-                // on the list to get topped off
-                shortAddresses.push(
-                    new distributeAccount(
-                        singleRunCost.sub(balance),
-                        addrWallet.address,
-                        i
-                    )
-                );
+            // if (balance.lt(singleRunCost)) {
+            //     // Address doesn't have enough funds, make sure it's
+            //     // on the list to get topped off
+            //     shortAddresses.push(
+            //         new distributeAccount(
+            //             singleRunCost.sub(balance),
+            //             addrWallet.address,
+            //             i
+            //         )
+            //     );
 
-                continue;
-            }
+            //     continue;
+            // }
 
             // Address has enough funds already, mark it as ready
             this.readyMnemonicIndexes.push(i);
@@ -217,23 +197,10 @@ class Distributor {
     ): Promise<distributeAccount[]> {
         // Check if the root wallet has enough funds to distribute
         const accountsToFund: distributeAccount[] = [];
+        let distributorBalance = BigNumber.from(
+            await this.ethWallet.getBalance()
+        );
 
-        const response = await axios({
-            url: (this.provider as JsonRpcProvider).connection.url,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            data: JSON.stringify({
-                jsonrpc: '2.0',
-                method: 'eth_getBalance',
-                params: [this.address, 'latest'],
-                id: 1
-            })
-        });
-
-
-        let distributorBalance = BigNumber.from(response.data.result);
 
 
         while (
@@ -267,45 +234,15 @@ class Distributor {
             speed: 'N/A',
         });
 
-           // Get chainId and other parameters once
-        const chainId = await this.provider.getNetwork().then(n => n.chainId);
-        const gasPrice = await this.provider.getGasPrice();
-        const nonce = await this.provider.getTransactionCount(this.address);
+        // for (const acc of accounts) {
+        //     await this.ethWallet.sendTransaction({
+        //         to: acc.address,
+        //         value: acc.missingFunds,
+        //     });
 
-        for (const [index, acc] of accounts.entries()) {
-            // Populate transaction object
-            const tx = {
-                from: this.address,
-                to: acc.address,
-                value: acc.missingFunds.toHexString(),
-                nonce: nonce + index,
-                gasPrice: gasPrice.toHexString(),
-                chainId: chainId,
-                gasLimit: "0x5208" // 21000 in hex
-            };
-
-            // Make RPC call to send transaction
-            const response = await axios({
-                url: (this.provider as JsonRpcProvider).connection.url,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                data: JSON.stringify({
-                    jsonrpc: '2.0',
-                    method: 'eth_sendTransaction',
-                    params: [tx],
-                    id: 1
-                })
-            });
-
-            if (response.data.error) {
-                throw new Error(`Transaction failed: ${response.data.error.message}`);
-            }
-
-            fundBar.increment();
-            this.readyMnemonicIndexes.push(acc.mnemonicIndex);
-        }
+        //     fundBar.increment();
+        //     this.readyMnemonicIndexes.push(acc.mnemonicIndex);
+        // }
 
         fundBar.stop();
     }
